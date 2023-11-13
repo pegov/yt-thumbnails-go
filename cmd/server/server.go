@@ -19,7 +19,7 @@ import (
 
 type Cache interface {
 	Get(ctx context.Context, videoID string) ([]byte, error)
-	Set(ctx context.Context, videoID string, data []byte, ts int64) error
+	Set(ctx context.Context, videoID string, data []byte) error
 }
 
 type Extractor interface {
@@ -81,7 +81,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		}
 	}
 
-	s.cache.Set(ctx, videoID, b, 0)
+	s.cache.Set(ctx, videoID, b)
 
 	return &pb.GetResponse{
 		Url:     req.Url,

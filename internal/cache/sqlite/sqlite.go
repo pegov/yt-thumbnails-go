@@ -3,7 +3,9 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pegov/yt-thumbnails-go/internal/cache"
@@ -64,22 +66,29 @@ func New() *SQLiteCache {
 // Get grabs thumbnail from cache
 func (c *SQLiteCache) Get(ctx context.Context, videoID string) ([]byte, error) {
 	row := c.selectStmt.QueryRowContext(ctx, videoID)
-	var dataLen int
-	var b []byte
-	var ts int64
+	var (
+		dataLen int
+		b       []byte
+		ts      int64
+	)
 	err := row.Scan(&b, &dataLen, &ts)
 
-	// TODO: check ts
-
-	if err == nil {
-		return b, nil
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return b, cache.ErrNotFound
+		} else {
+			return b, cache.ErrInternal
+		}
 	}
 
-	if err == sql.ErrNoRows {
+	now := time.Now().Unix()
+	delta := now - ts
+	// Cache is valid only for 24 hours
+	if delta > 60*60*24 {
 		return b, cache.ErrNotFound
 	}
 
-	return b, cache.ErrInternal
+	return b, nil
 }
 
 // Set saves thumbnails to cache
@@ -87,9 +96,8 @@ func (c *SQLiteCache) Set(
 	ctx context.Context,
 	videoID string,
 	data []byte,
-	ts int64,
 ) error {
-	_, err := c.insertStmt.ExecContext(ctx, videoID, data, ts) // TODO: ts
+	_, err := c.insertStmt.ExecContext(ctx, videoID, data, time.Now().Unix())
 
 	if err != nil {
 		return cache.ErrInternal
