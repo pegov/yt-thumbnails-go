@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+option go_package = "github.com/pegov/yt-thumbnails-go/api/thumbnail_v1";
+
+service ThumbnailService {
+    rpc Get(GetRequest) returns (GetResponse);
+}
+
+message GetRequest {
+    string url = 1;
+}
+
+message GetResponse {
+    string url = 1;
+    string video_id = 2;
+    bytes data = 3;
+}
