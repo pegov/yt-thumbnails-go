@@ -1,3 +1,10 @@
+build:
+	go build -v -o build/server cmd/server/server.go
+	go build -v -o build/client cmd/client/client.go
+
+clean:
+	rm -rf build
+
 generate:
 	mkdir -p api/thumbnail_v1
 	protoc \

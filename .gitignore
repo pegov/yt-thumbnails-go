@@ -22,4 +22,5 @@ go.work
 
 *.jpg
 *.db
-*.txt
+
+build/

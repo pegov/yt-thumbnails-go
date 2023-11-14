@@ -1,6 +1,6 @@
 module github.com/pegov/yt-thumbnails-go
 
-go 1.21.3
+go 1.21
 
 require (
 	google.golang.org/grpc v1.59.0
