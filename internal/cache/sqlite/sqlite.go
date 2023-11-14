@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+
 	"github.com/pegov/yt-thumbnails-go/internal/cache"
 )
 
@@ -28,7 +28,7 @@ INSERT INTO thumbnail (video_id, data, ts) VALUES (
 `
 
 const sqlSelect = `
-SELECT data, length(data), ts FROM thumbnail WHERE video_id = ?;
+SELECT data, ts FROM thumbnail WHERE video_id = ?;
 `
 
 type SQLiteCache struct {
@@ -37,41 +37,40 @@ type SQLiteCache struct {
 	selectStmt *sql.Stmt
 }
 
-func New() *SQLiteCache {
+func New(ctx context.Context) (*SQLiteCache, error) {
 	db, err := sql.Open("sqlite3", "./thumbnail.db")
 	if err != nil {
-		log.Fatalf("sql.Open -> %v", err)
+		return nil, err
 	}
 
-	if err := db.Ping(); err != nil {
-		log.Fatalf("db.Ping -> %v", err)
+	if err := db.PingContext(ctx); err != nil {
+		return nil, err
 	}
 	_, err = db.Exec(sqlInit)
 	if err != nil {
-		log.Fatalf("db.Exec(sqlInit) -> %v", err)
+		return nil, err
 	}
 
-	insertStmt, err := db.Prepare(sqlInsert)
+	insertStmt, err := db.PrepareContext(ctx, sqlInsert)
 	if err != nil {
-		log.Fatalf("db.Prepare(sqlInsert) -> %v", err)
+		return nil, err
 	}
 
-	selectStmt, err := db.Prepare(sqlSelect)
+	selectStmt, err := db.PrepareContext(ctx, sqlSelect)
 	if err != nil {
-		log.Fatalf("db.Prepare(sqlSelect) -> %v", err)
+		return nil, err
 	}
-	return &SQLiteCache{db, insertStmt, selectStmt}
+	return &SQLiteCache{db, insertStmt, selectStmt}, nil
 }
 
 // Get grabs thumbnail from cache
 func (c *SQLiteCache) Get(ctx context.Context, videoID string) ([]byte, error) {
 	row := c.selectStmt.QueryRowContext(ctx, videoID)
 	var (
-		dataLen int
-		b       []byte
-		ts      int64
+		b  []byte
+		ts int64
 	)
-	err := row.Scan(&b, &dataLen, &ts)
+	err := row.Scan(&b, &ts)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -102,6 +101,8 @@ func (c *SQLiteCache) Set(
 	if err != nil {
 		return cache.ErrInternal
 	}
+
+	// TODO: Optionally clear expired items on every ~10th set to save space.
 
 	return nil
 }

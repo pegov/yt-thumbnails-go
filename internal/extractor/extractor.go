@@ -1,8 +1,6 @@
 package extractor
 
-import (
-	"errors"
-)
+import "errors"
 
 var (
 	ErrInvalidUrl = errors.New("invalid url")
