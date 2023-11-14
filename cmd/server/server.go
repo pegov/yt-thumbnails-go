@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"net"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -27,7 +29,7 @@ type Extractor interface {
 }
 
 type Downloader interface {
-	DownloadThumbnail(videoID string) ([]byte, error)
+	DownloadThumbnail(ctx context.Context, videoID string) ([]byte, error)
 }
 
 type server struct {
@@ -50,6 +52,9 @@ var (
 func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
 	videoID, err := s.extractor.ExtractVideoIDFromURL(req.Url)
 
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "url: invalid url")
 	}
@@ -63,25 +68,39 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 			Data:    b,
 		}, nil
 	} else if err != nil && err != cache.ErrNotFound {
-		log.Fatalf("%v: internal cache error %v", videoID, err)
+		if errors.Is(err, context.Canceled) {
+			log.Fatalf("%v: timeout while looking in cache", videoID)
+		} else {
+			log.Fatalf("%v: internal cache error %v", videoID, err)
+		}
 	}
 
 	s.semaphore <- struct{}{}
 	log.Printf("%v: making http request...\n", videoID)
-	b, err = s.downloader.DownloadThumbnail(videoID)
+	b, err = s.downloader.DownloadThumbnail(ctx, videoID)
 	<-s.semaphore
 	if err != nil {
 		switch err {
 		case downloader.ErrNotFound:
-			log.Printf("%v: not found\n", videoID)
+			log.Printf("%v: not found", videoID)
 			return nil, status.Error(codes.NotFound, "NOT_FOUND")
+		case downloader.ErrTimeout:
+			log.Printf("%v: timeout", videoID)
+			return nil, status.Error(codes.DeadlineExceeded, "timeout")
 		default:
 			log.Printf("%v: %v\n", videoID, err)
 			return nil, status.Error(codes.Internal, "INTERNAL")
 		}
 	}
 
-	s.cache.Set(ctx, videoID, b)
+	err = s.cache.Set(ctx, videoID, b)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			log.Fatalf("%v: timeout while saving to cache", videoID)
+		} else {
+			log.Fatalf("%v: internal cache error %v", videoID, err)
+		}
+	}
 
 	return &pb.GetResponse{
 		Url:     req.Url,

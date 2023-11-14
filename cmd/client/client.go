@@ -60,8 +60,7 @@ func main() {
 
 	c := pb.NewThumbnailServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	var urls []string
 
@@ -102,6 +101,8 @@ func main() {
 		for _, url := range urls {
 			go func(url string) {
 				semaphore <- struct{}{}
+				ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
 				r, err := c.Get(ctx, &pb.GetRequest{Url: url})
 				<-semaphore
 				if err != nil {
@@ -110,6 +111,8 @@ func main() {
 						log.Printf("%v: not found", url)
 					case codes.InvalidArgument:
 						log.Printf("%v: invalid url", url)
+					case codes.DeadlineExceeded:
+						log.Printf("%v: timeout", url)
 					case codes.Canceled:
 						log.Printf("%v: canceled context", url)
 					case codes.Unavailable:
@@ -144,6 +147,8 @@ func main() {
 		log.Println("async: OFF")
 		successfullOps := 0
 		for _, url := range urls {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
 			r, err := c.Get(ctx, &pb.GetRequest{Url: url})
 			if err != nil {
 				switch status.Code(err) {
@@ -151,6 +156,8 @@ func main() {
 					log.Printf("%v: not found", url)
 				case codes.InvalidArgument:
 					log.Printf("%v: invalid url", url)
+				case codes.DeadlineExceeded:
+					log.Printf("%v: timeout", url)
 				case codes.Canceled:
 					log.Printf("%v: canceled context", url)
 				case codes.Unavailable:
