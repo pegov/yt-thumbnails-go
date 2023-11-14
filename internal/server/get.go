@@ -14,6 +14,10 @@ import (
 	"github.com/pegov/yt-thumbnails-go/internal/downloader"
 )
 
+var (
+	errInternal = status.Error(codes.Internal, "internal")
+)
+
 func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
 	videoID, err := s.extractor.ExtractVideoIDFromURL(req.Url)
 	if err != nil {
@@ -43,7 +47,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 			)
 		}
 		s.stopOnInternalError(err)
-		return nil, status.Error(codes.Internal, "INTERNAL")
+		return nil, errInternal
 	}
 
 	s.semaphore <- struct{}{}
@@ -54,7 +58,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		switch err {
 		case downloader.ErrNotFound:
 			s.logger.Info("HTTP request: not found", slog.String("video_id", videoID))
-			return nil, status.Error(codes.NotFound, "NOT_FOUND")
+			return nil, status.Error(codes.NotFound, "not found")
 		case downloader.ErrTimeout:
 			s.logger.Error("HTTP request: timeout", slog.String("video_id", videoID))
 			return nil, status.Error(codes.DeadlineExceeded, "timeout")
@@ -64,7 +68,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 				slog.String("video_id", videoID),
 				slog.Any("err", err),
 			)
-			return nil, status.Error(codes.Internal, "INTERNAL")
+			return nil, errInternal
 		}
 	}
 
@@ -80,7 +84,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 			)
 		}
 		s.stopOnInternalError(err)
-		return nil, status.Error(codes.Internal, "INTERNAL")
+		return nil, errInternal
 	}
 
 	return &pb.GetResponse{
