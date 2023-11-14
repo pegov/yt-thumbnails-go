@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	pb "github.com/pegov/yt-thumbnails-go/api/thumbnail_v1"
@@ -23,23 +24,26 @@ type Extractor interface {
 type server struct {
 	pb.UnimplementedThumbnailServiceServer
 
+	logger     *slog.Logger
 	cache      Cache
 	extractor  Extractor
 	downloader Downloader
 	semaphore  chan struct{}
-	shutdown   chan<- error
+	shutdown   chan<- struct{}
 	mu         sync.Mutex
 	isStopping bool
 }
 
 func NewServer(
+	logger *slog.Logger,
 	cache Cache,
 	extractor Extractor,
 	downloader Downloader,
 	maxParallelHTTPRequests int,
-	shutdown chan<- error,
+	shutdown chan<- struct{},
 ) *server {
 	return &server{
+		logger:     logger,
 		cache:      cache,
 		extractor:  extractor,
 		downloader: downloader,
@@ -54,7 +58,7 @@ func (s *server) stopOnInternalError(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.isStopping {
-		s.shutdown <- err
+		s.shutdown <- struct{}{}
 		s.isStopping = true
 	}
 }

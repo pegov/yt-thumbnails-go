@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -31,7 +31,12 @@ var (
 func main() {
 	flag.Parse()
 
-	log.SetFlags(0)
+	logLevel, ok := os.LookupEnv("LOG_LEVEL")
+	if !ok {
+		logLevel = "INFO"
+	}
+
+	logger := setupLogger(logLevel)
 
 	ctx := context.Background()
 
@@ -39,11 +44,13 @@ func main() {
 	defer cancel()
 	sqliteCache, err := sqlite.New(ctxCache)
 	if err != nil {
-		log.Fatalf("Could not create sqlite cache: %v", err)
+		logger.Error("Could not create sqlite cache", slog.Any("err", err))
+		os.Exit(1)
 	}
 
-	shutdown := make(chan error, 1)
+	shutdown := make(chan struct{}, 1)
 	srv := server.NewServer(
+		logger,
 		sqliteCache,
 		extractor.RegexExtractor{},
 		downloader.MaxResOrHqDownloader{},
@@ -59,23 +66,24 @@ func main() {
 
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		logger.Error("Failed to listen: %v", err)
+		os.Exit(1)
 	}
 
-	log.Print("Starting server")
+	logger.Info("Starting server")
 
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+			logger.Error("Failed to serve", slog.Any("err", err))
+			os.Exit(1)
 		}
 	}()
-	log.Printf("Server listening at %v\n", lis.Addr())
+	logger.Info("Server listening", slog.Any("addr", lis.Addr()))
 
 	select {
 	case <-done:
-		log.Print("Stopping server")
-	case err := <-shutdown:
-		log.Printf("Internal server error: %v", err)
+		logger.Warn("Stopping server")
+	case <-shutdown:
 	}
 
 	ctxShutdown, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -90,9 +98,29 @@ func main() {
 
 	select {
 	case <-ctxShutdown.Done():
-		log.Print("Timeout on graceful shutdown")
+		logger.Warn("Timeout on graceful shutdown")
 		grpcServer.Stop()
 	case <-stop:
-		log.Print("Graceful shutdown")
+		logger.Warn("Graceful shutdown")
 	}
+}
+
+func setupLogger(levelString string) *slog.Logger {
+	var level slog.Level
+	switch levelString {
+	case "DEBUG":
+		level = slog.LevelDebug
+	case "INFO":
+		level = slog.LevelInfo
+	case "WARN":
+		level = slog.LevelWarn
+	case "ERROR":
+		level = slog.LevelError
+	default:
+		panic("unknown level name")
+	}
+
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level,
+	}))
 }

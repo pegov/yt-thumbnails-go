@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -26,7 +26,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 
 	b, err := s.cache.Get(ctx, videoID)
 	if err == nil {
-		log.Printf("%v: getting from cache...", videoID)
+		s.logger.Info("Getting image from cache", slog.String("video_id", videoID))
 		return &pb.GetResponse{
 			Url:     req.Url,
 			VideoId: videoID,
@@ -34,28 +34,36 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		}, nil
 	} else if err != nil && err != cache.ErrNotFound {
 		if errors.Is(err, context.Canceled) {
-			log.Printf("%v: timeout while looking in cache", videoID)
+			s.logger.Error("Cache GET: timeout", slog.String("video_id", videoID))
 		} else {
-			log.Printf("%v: internal cache error %v", videoID, err)
+			s.logger.Error(
+				"Cache GET: internal error",
+				slog.String("video_id", videoID),
+				slog.Any("err", err),
+			)
 		}
 		s.stopOnInternalError(err)
 		return nil, status.Error(codes.Internal, "INTERNAL")
 	}
 
 	s.semaphore <- struct{}{}
-	log.Printf("%v: making http request...\n", videoID)
+	s.logger.Info("HTTP request", slog.String("video_id", videoID))
 	b, err = s.downloader.DownloadThumbnail(ctx, videoID)
 	<-s.semaphore
 	if err != nil {
 		switch err {
 		case downloader.ErrNotFound:
-			log.Printf("%v: not found", videoID)
+			s.logger.Info("HTTP request: not found", slog.String("video_id", videoID))
 			return nil, status.Error(codes.NotFound, "NOT_FOUND")
 		case downloader.ErrTimeout:
-			log.Printf("%v: timeout", videoID)
+			s.logger.Error("HTTP request: timeout", slog.String("video_id", videoID))
 			return nil, status.Error(codes.DeadlineExceeded, "timeout")
 		default:
-			log.Printf("%v: %v\n", videoID, err)
+			s.logger.Error(
+				"HTTP request: internal error",
+				slog.String("video_id", videoID),
+				slog.Any("err", err),
+			)
 			return nil, status.Error(codes.Internal, "INTERNAL")
 		}
 	}
@@ -63,9 +71,13 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	err = s.cache.Set(ctx, videoID, b)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			log.Printf("%v: timeout while saving to cache", videoID)
+			s.logger.Error("Cache SET: timeout", slog.String("video_id", videoID))
 		} else {
-			log.Printf("%v: internal cache error %v", videoID, err)
+			s.logger.Error(
+				"Cache SET: internal error",
+				slog.String("video_id", videoID),
+				slog.Any("err", err),
+			)
 		}
 		s.stopOnInternalError(err)
 		return nil, status.Error(codes.Internal, "INTERNAL")
