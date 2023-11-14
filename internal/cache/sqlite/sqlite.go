@@ -11,25 +11,27 @@ import (
 	"github.com/pegov/yt-thumbnails-go/internal/cache"
 )
 
-const sqlInit = `
-CREATE TABLE IF NOT EXISTS thumbnail (
-	id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-	video_id TEXT,
-	data BLOB,
-	ts INTEGER
-);
-CREATE INDEX IF NOT EXISTS thumbnail_video_id_idx ON thumbnail(video_id);
-`
+const (
+	sqlInit = `
+	CREATE TABLE IF NOT EXISTS thumbnail (
+		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		video_id TEXT,
+		data BLOB,
+		ts INTEGER
+	);
+	CREATE INDEX IF NOT EXISTS thumbnail_video_id_idx ON thumbnail(video_id);
+	`
+	sqlInsert = `
+	INSERT INTO thumbnail (video_id, data, ts) VALUES (
+		?, ?, ?
+	);
+	`
+	sqlSelect = `
+	SELECT data, ts FROM thumbnail WHERE video_id = ?;
+	`
+)
 
-const sqlInsert = `
-INSERT INTO thumbnail (video_id, data, ts) VALUES (
-	?, ?, ?
-);
-`
-
-const sqlSelect = `
-SELECT data, ts FROM thumbnail WHERE video_id = ?;
-`
+const exp = 60 * 60 * 24
 
 type SQLiteCache struct {
 	db         *sql.DB
@@ -37,8 +39,8 @@ type SQLiteCache struct {
 	selectStmt *sql.Stmt
 }
 
-func New(ctx context.Context) (*SQLiteCache, error) {
-	db, err := sql.Open("sqlite3", "./thumbnail.db")
+func New(ctx context.Context, filepath string) (*SQLiteCache, error) {
+	db, err := sql.Open("sqlite3", filepath)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +85,7 @@ func (c *SQLiteCache) Get(ctx context.Context, videoID string) ([]byte, error) {
 	now := time.Now().Unix()
 	delta := now - ts
 	// Cache is valid only for 24 hours
-	if delta > 60*60*24 {
+	if delta > exp {
 		return b, cache.ErrNotFound
 	}
 
@@ -95,8 +97,9 @@ func (c *SQLiteCache) Set(
 	ctx context.Context,
 	videoID string,
 	data []byte,
+	ts int64,
 ) error {
-	_, err := c.insertStmt.ExecContext(ctx, videoID, data, time.Now().Unix())
+	_, err := c.insertStmt.ExecContext(ctx, videoID, data, ts)
 
 	if err != nil {
 		return cache.ErrInternal

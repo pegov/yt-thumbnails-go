@@ -72,7 +72,7 @@ func (s *server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		}
 	}
 
-	err = s.cache.Set(ctx, videoID, b)
+	err = s.cache.Set(ctx, videoID, b, time.Now().Unix())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			s.logger.Error("Cache SET: timeout", slog.String("video_id", videoID))

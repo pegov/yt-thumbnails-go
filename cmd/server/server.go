@@ -42,7 +42,7 @@ func main() {
 
 	ctxCache, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	sqliteCache, err := sqlite.New(ctxCache)
+	sqliteCache, err := sqlite.New(ctxCache, "./thumbnail.db")
 	if err != nil {
 		logger.Error("Could not create sqlite cache", slog.Any("err", err))
 		os.Exit(1)

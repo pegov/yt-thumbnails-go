@@ -21,6 +21,8 @@
 go.work
 
 *.jpg
+!testdata/*.jpg
+
 *.db
 
 build/

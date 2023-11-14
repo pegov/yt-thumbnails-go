@@ -1,9 +1,10 @@
 package extractor
 
 import (
-	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type pair struct {
@@ -31,12 +32,11 @@ var extractor = RegexExtractor{}
 func TestExtractVideoIDFromURL(t *testing.T) {
 	for _, p := range urls {
 		videoID, err := extractor.ExtractVideoIDFromURL(p.s)
-		if p.e != nil {
-			if !errors.Is(err, p.e) {
-				t.Errorf("ExtractVideoIDFromURL(%v): expect %v error, got %v error\n", p.s, p.e, err)
-			}
+		if p.e != nil && assert.ErrorIs(t, err, p.e) {
 			return
 		}
+
+		assert.Equal(t, videoID, wantID)
 		if videoID != wantID {
 			t.Errorf("ExtractVideoIDFromURL(%v): expect %v, got %v\n", p.s, wantID, videoID)
 		}

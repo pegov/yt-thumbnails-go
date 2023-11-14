@@ -10,7 +10,7 @@ import (
 
 type Cache interface {
 	Get(ctx context.Context, videoID string) ([]byte, error)
-	Set(ctx context.Context, videoID string, data []byte) error
+	Set(ctx context.Context, videoID string, data []byte, ts int64) error
 }
 
 type Downloader interface {
