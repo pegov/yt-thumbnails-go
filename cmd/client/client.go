@@ -27,21 +27,28 @@ var (
 	output              = flag.String("output", ".", "output path")
 	async               = flag.Bool("async", false, "make requests in parallel")
 	maxParallelRequests = flag.Int("max-parallel-requests", 8, "max parallel requests")
+	maxRetries          = flag.Int("max-retries", 3, "max retries if service is unavailable (0 - no retries)")
 )
 
-func WriteFile(videoID string, b []byte, outputPath string) string {
-	const NewFileFormat = "%s.jpg"
-	filename := fmt.Sprintf(NewFileFormat, videoID)
-	p := path.Join(outputPath, filename)
-	os.WriteFile(p, b, 0666)
-	return p
-}
+var retryPolicyTemplate = `{
+"methodConfig": [{
+	"name": [{"service": "ThumbnailService"}],
+	"waitForReady": true,
+	"retryPolicy": {
+		"MaxAttempts": %d,
+		"InitialBackoff": ".01s",
+		"MaxBackoff": ".01s",
+		"BackoffMultiplier": 1.0,
+		"RetryableStatusCodes": [ "UNAVAILABLE" ]
+	}
+}]}`
 
 func main() {
 	flag.Parse()
+
 	log.SetFlags(0)
 
-	// Create output folder if not exists
+	// Create output folder if it does not exist
 	if info, err := os.Stat(*output); !os.IsNotExist(err) {
 		if !info.IsDir() {
 			log.Fatalf("%v is not a dir!", output)
@@ -52,7 +59,15 @@ func main() {
 		}
 	}
 
-	conn, err := grpc.Dial(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	retryPolicy := fmt.Sprintf(retryPolicyTemplate, *maxRetries)
+	conn, err := grpc.Dial(
+		*addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultServiceConfig(retryPolicy),
+	)
 	if err != nil {
 		log.Fatalf("Did not connect: %v", err)
 	}
@@ -60,11 +75,9 @@ func main() {
 
 	c := pb.NewThumbnailServiceClient(conn)
 
-	ctx := context.Background()
-
 	var urls []string
 
-	// Either input file OR args
+	// Append urls from input file
 	if *inputFile != "" {
 		file, err := os.Open(*inputFile)
 		if err != nil {
@@ -72,112 +85,41 @@ func main() {
 		}
 		defer file.Close()
 
-		var lines []string
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if len(line) > 0 {
-				lines = append(lines, scanner.Text())
+				urls = append(urls, scanner.Text())
 			}
 		}
-		urls = lines
-	} else {
-		urls = flag.Args()
 	}
 
-	log.Printf("Total number of urls: %d", len(urls))
+	// Append urls from args
+	urls = append(urls, flag.Args()...)
 
 	if len(urls) == 0 {
 		log.Fatalf("No urls specified")
 	}
 
-	if *async {
-		var successfullOps atomic.Int64
-		log.Printf("async: ON")
-		log.Printf("Number of parallel requests: %d", *maxParallelRequests)
-		var wg sync.WaitGroup
-		wg.Add(len(urls))
-		semaphore := make(chan struct{}, *maxParallelRequests)
-		for _, url := range urls {
-			go func(url string) {
-				semaphore <- struct{}{}
-				ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				r, err := c.Get(ctx, &pb.GetRequest{Url: url})
-				<-semaphore
-				if err != nil {
-					switch status.Code(err) {
-					case codes.NotFound:
-						log.Printf("%v: not found", url)
-					case codes.InvalidArgument:
-						log.Printf("%v: invalid url", url)
-					case codes.DeadlineExceeded:
-						log.Printf("%v: timeout", url)
-					case codes.Canceled:
-						log.Printf("%v: canceled context", url)
-					case codes.Unavailable:
-						log.Printf("%v: unavailable", url)
-						cancel()
-					default:
-						log.Printf("%v: %v", url, err)
-					}
-				} else {
-					b := r.GetData()
-					name := r.GetVideoId()
-					fullPath := WriteFile(name, b, *output)
-					log.Printf("Saved %s\n", fullPath)
-					successfullOps.Add(1)
-				}
-				wg.Done()
-			}(url)
-		}
-		wg.Wait()
+	log.Printf("Total number of urls: %d", len(urls))
 
-		err := ctx.Err()
-		if err != nil {
-			log.Fatalf("Could not connect to server")
-		}
+	if !*async {
+		log.Printf("async: OFF")
 
-		log.Printf(
-			"Downloaded %d/%d thumbnails",
-			successfullOps.Load(),
-			len(urls),
-		)
-	} else {
-		log.Println("async: OFF")
-		successfullOps := 0
+		var successfullOps int
 		for _, url := range urls {
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
-			r, err := c.Get(ctx, &pb.GetRequest{Url: url})
+			res, err := c.Get(ctx, &pb.GetRequest{Url: url})
 			if err != nil {
-				switch status.Code(err) {
-				case codes.NotFound:
-					log.Printf("%v: not found", url)
-				case codes.InvalidArgument:
-					log.Printf("%v: invalid url", url)
-				case codes.DeadlineExceeded:
-					log.Printf("%v: timeout", url)
-				case codes.Canceled:
-					log.Printf("%v: canceled context", url)
-				case codes.Unavailable:
-					log.Printf("%v: unavailable", url)
-					cancel()
-				default:
-					log.Printf("Could not get %v: %v", url, err)
-				}
+				logError(url, err)
 			} else {
-				b := r.GetData()
-				name := r.GetVideoId()
-				fullPath := WriteFile(name, b, *output)
+				b := res.GetData()
+				videoID := res.GetVideoId()
+				fullPath := writeFile(videoID, b, *output)
 				log.Printf("Saved %s\n", fullPath)
 				successfullOps++
 			}
-		}
-
-		err := ctx.Err()
-		if err != nil {
-			log.Fatalf("Could not connect to server")
 		}
 
 		log.Printf(
@@ -185,6 +127,68 @@ func main() {
 			successfullOps,
 			len(urls),
 		)
+
+		return
 	}
 
+	log.Printf("async: ON")
+	log.Printf("Number of parallel requests: %d", *maxParallelRequests)
+
+	var successfullOps atomic.Int64
+	var wg sync.WaitGroup
+	wg.Add(len(urls))
+
+	semaphore := make(chan struct{}, *maxParallelRequests)
+	for _, url := range urls {
+		go func(url string) {
+			semaphore <- struct{}{}
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			res, err := c.Get(ctx, &pb.GetRequest{Url: url})
+			<-semaphore
+
+			if err != nil {
+				logError(url, err)
+			} else {
+				b := res.GetData()
+				videoID := res.GetVideoId()
+				fullPath := writeFile(videoID, b, *output)
+				log.Printf("Saved %s\n", fullPath)
+				successfullOps.Add(1)
+			}
+			wg.Done()
+		}(url)
+	}
+	wg.Wait()
+
+	log.Printf(
+		"Downloaded %d/%d thumbnails",
+		successfullOps.Load(),
+		len(urls),
+	)
+}
+
+func writeFile(videoID string, b []byte, outputPath string) string {
+	const NewFileFormat = "%s.jpg"
+	filename := fmt.Sprintf(NewFileFormat, videoID)
+	p := path.Join(outputPath, filename)
+	os.WriteFile(p, b, 0666)
+	return p
+}
+
+func logError(url string, err error) {
+	switch status.Code(err) {
+	case codes.NotFound:
+		log.Printf("%v: not found", url)
+	case codes.InvalidArgument:
+		log.Printf("%v: invalid url", url)
+	case codes.DeadlineExceeded:
+		log.Printf("%v: timeout", url)
+	case codes.Canceled:
+		log.Printf("%v: canceled context", url)
+	case codes.Unavailable:
+		log.Printf("%v: unavailable", url)
+	default:
+		log.Printf("%v: %v", url, err)
+	}
 }
