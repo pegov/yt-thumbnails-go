@@ -51,7 +51,7 @@ func main() {
 	// Create output folder if it does not exist
 	if info, err := os.Stat(*output); !os.IsNotExist(err) {
 		if !info.IsDir() {
-			log.Fatalf("%v is not a dir!", output)
+			log.Fatalf("%v is not a dir!", *output)
 		}
 	} else {
 		if err := os.MkdirAll(*output, os.ModePerm); err != nil {
